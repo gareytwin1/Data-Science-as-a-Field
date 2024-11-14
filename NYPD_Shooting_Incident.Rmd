@@ -1,0 +1,221 @@
+---
+title: "NYDP Shooting Incident Data"
+author: "Garey Salinas"
+date: "2024-11-05"
+output:
+  html_document:
+    toc: true           # Enables the Table of Contents
+    toc_depth: 2        # Sets the depth to include up to ## headers (1 for #, 2 for ##)
+    toc_float: true     # Makes the TOC float on the side (only for HTML output)
+  pdf_document:
+    toc: true           # TOC for PDF output as well
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+## NY Shooting Incident Data
+
+The NY Shooting Incident data set provides a comprehensive record of every shooting incident reported in New York City from 2006 through the end of the previous calendar year. The New York city data set is a csv file and can be downloaded from [https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD](https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD)
+
+## Import Libraries
+
+```{r import-libraries}
+library(stringr)
+library(readr)
+library(tidyverse)
+library(knitr)
+```
+
+## Load Data
+
+I will start by reading in the data from the link provided above. 
+
+```{r read_data, echo = TRUE}
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+incidents <- read_csv(url, show_col_types = FALSE)
+```
+
+
+### Data
+
+View data set
+
+```{r view-incident-data}
+incidents
+```
+
+Summary of data set
+
+```{r summary-incident-data}
+summary(incidents)
+```
+
+After looking at the data set, I want to tidy the data set by removing the `INCIDENT_KEY, X_COORD_CD, Y_COORD_CD, PRECINCT, LOC_OF_OCCUR_DESC, JURISDICTION_CODE, LOC_CLASSFCTN_DESC, LOCATION_DESC, Latitude, Longitude, Lon_Lat`.
+
+```{r remove-cols}
+incidents_clean <- incidents %>% select(-c(INCIDENT_KEY, 
+                                           X_COORD_CD, 
+                                           Y_COORD_CD, 
+                                           PRECINCT, 
+                                           LOC_OF_OCCUR_DESC, 
+                                           JURISDICTION_CODE, 
+                                           LOC_CLASSFCTN_DESC, 
+                                           LOCATION_DESC, 
+                                           Latitude, Longitude, Lon_Lat))
+incidents_clean
+```
+
+Count the number of missing values in each column
+
+```{r missing-values}
+# Count NA values for each column in incidents_clean
+na_counts <- sapply(incidents_clean, function(x) sum(is.na(x)))
+
+# Convert the result to a DataFrame with specified column names
+na_summary <- tibble(
+  Columns = names(na_counts),
+  NA_Count = na_counts
+)
+
+kable(na_summary)
+```
+
+
+Converting `OCCUR_DATE` object into a date object
+
+```{r convert-occur-date}
+incidents_clean$OCCUR_DATE <- mdy(incidents_clean$OCCUR_DATE)
+incidents_clean
+```
+
+## Plots
+
+Bar chart of shooting incidents by `BORO`
+
+```{r boro-bar-chart}
+ggplot(incidents_clean, aes(x = BORO, fill = BORO)) +
+  geom_bar() +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5) +
+  labs(title = "Count of Each BORO", x = "BORO", y = "Count") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Dark2")
+
+```
+
+Stacked bar chart of `STATISTICAL_MURDER_FLAG` (TRUE/FALSE) in each `BORO`
+
+```{r barchart-murder-boro}
+ggplot(incidents_clean, aes(x = BORO, fill = STATISTICAL_MURDER_FLAG)) +
+  geom_bar() +
+  geom_text(stat = "count", aes(label = after_stat(count)),
+            position = position_stack(vjust = 0.5)) +
+  labs(title = "Murder Counts by Boro", x = "Boro", y = "Count", fill = "MURDER") +
+  theme_minimal()
+```
+
+Showing a line plot of Brooklyn Murders.
+
+```{r brooklyn-murders-yearly}
+# Filter for Brooklyn murders and aggregate by year
+brooklyn_murders_yearly <- incidents_clean %>%
+  filter(BORO == "BROOKLYN" & STATISTICAL_MURDER_FLAG == TRUE) %>%  # Filter for Brooklyn murder incidents
+  mutate(year = year(OCCUR_DATE)) %>%                                # Extract year from date
+  group_by(year) %>%                                                 # Group by year
+  summarize(total_incidents = n())                                   # Count murders per year
+
+# Plot the line chart
+ggplot(brooklyn_murders_yearly, aes(x = year, y = total_incidents)) +
+  geom_line(color = "red") +                         # Line plot for yearly totals
+  geom_point(color = "black", size = 2) +            # Add points at each year for clarity
+  labs(title = "Yearly Murder Totals in Brooklyn",
+       x = "Year",
+       y = "Total Murders") +
+  theme_minimal()
+```
+
+## Analysis
+ - Brooklyn has the highest total incidents among all the boroughs.
+ - The Bronx and Brooklyn have the highest murder counts, with 1,634 and 2,210 murders. 
+ - Manhattan and Queens have moderate murder counts, while Staten Island has the lowest murder count. 
+ - The proportion of murders to non-murders varies between boroughs. For example, while Brooklyn has the highest number of murders, it also has a very high count of non-murders. 
+ - Murder incidents appear to be highly variable across the years. 
+ - The later years in the data set, especially 2020 onward, show relatively lower and more consistent incident counts.
+ -  Incidents peaked from 2008 to 2010, with a decrease in incidents from 2011 to 2019,  then spiking again around 2020.
+ 
+
+## Bias 
+- The analysis did not account for socioeconomic and demographic factors. Income, employment rates, and population density can influence incident levels. 
+- Some neighborhoods may experience higher police presence and higher reporting rates, which can skew the data toward these areas.  
+- Not all crimes could have been reported, especially in under-resourced communities.  
+
+## Analysis Conclusion
+The Project examined the murder trend in Brooklyn. My analysis identified several key findings. Brooklyn has the highest number of murders; it also has a very high count of non-murders. Incidents peaked from 2008 to 2010, with decreased incidents from 2011 to 2019,  then spiking again around 2020. High murder rates could indicate a period of economic depression, such as the mortgage crisis and the COVID-19 pandemic. Other factors, such as employment and other socioeconomic factors, contribute to the number of Incidents. Periods of low or no incidents suggest effective policing or community engagement.  
+
+## Question
+- Can we provide a model that predicts the number of murder incidents in Brooklyn to help law enforcement target resources more effectively?
+
+## Model
+The Brooklyn yearly trend seem to be non-linear so we will model the yearly trends using a polynomial regression of degree 2 or degree 3 and check which one is a better fit. 
+
+```{r murder-model}
+# Fit a polynomial regression model of degree 2
+model_poly2 <- lm(total_incidents ~ poly(year, 2), data = brooklyn_murders_yearly)
+
+# Fit a polynomial regression model of degree 3
+model_poly3 <- lm(total_incidents ~ poly(year, 3), data = brooklyn_murders_yearly)
+
+# Original line plot
+p <- ggplot(brooklyn_murders_yearly, aes(x = year, y = total_incidents)) +
+  geom_line(color = "red") +
+  geom_point(color = "black", size = 2) +
+  labs(title = "Yearly Murder Totals in Brooklyn with Regression Model",
+       x = "Year",
+       y = "Total Murders") +
+  theme_minimal()
+
+# Add the polynomial regression line (degree 2)
+p + geom_smooth(method = "lm", formula = y ~ poly(x, 2), color = "blue", se = FALSE) +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 3), color = "green", se = FALSE)
+```
+ 
+## Model Summary
+```{r model-summary}
+# Summary of the quadratic model
+summary(model_poly2)
+
+# Summary of the cubic model
+summary(model_poly3)
+
+```
+
+Based on the similar R-squared, higher RSE, and non-significant cubic term, the quadratic model (degree 2) is a better choice. It provides a similar fit with fewer terms, making it more straightforward and interpretable.
+
+
+Using AIC and BIC to help choose the best model
+```{r choose-model}
+AIC(model_poly2, model_poly3)
+BIC(model_poly2, model_poly3)
+```
+
+The quadratic model is better based on lower AIC and BIC values, simplicity, and interpretability. 
+
+## Prediction
+```{r brooklyn-murder-prediction}
+# Create a data frame for the year 2025
+murder_prediction <- data.frame(year = 2025)
+
+predicted_value_2025 <- predict(model_poly2, newdata = murder_prediction)
+
+print(predicted_value_2025)
+```
+
+Model predicts that 121 murders will occur in Brooklyn in the year 2025. 
+
+## Session Information
+
+```{r session-info}
+sessionInfo()
+```
