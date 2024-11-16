@@ -1,0 +1,279 @@
+---
+title: "COVID19 - Final Project 2"
+author: "Garey Salinas"
+date: "2024-11-12"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+```
+
+## Data
+
+The data sets are available in the [COVID-19 Time Series Data](https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_time_series)
+ on GitHub. The site contains daily time series data for COVID-19 cases. 
+ 
+### Global Data
+
+- time_series_covid19_confirmed_global.csv: Confirmed cases globally.
+
+These include province/state-level data for countries like Australia, Canada, and China. Other countries are aggregated at the national level.
+
+## Import Libraries
+```{r import-libraries, message=FALSE}
+library(stringr)
+library(readr)
+library(tidyverse) # For pivot_longer
+library(scales)
+library(sf) # For handling spatial data
+library(rnaturalearth) # For world map data
+library(rnaturalearthdata)
+```
+
+## Load Datasets
+
+I will start by reading in the data from the time_series_covid19_confirmed_global.csv
+
+```{r get_jhu_data}
+ url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+file_names <- c("time_series_covid19_confirmed_global.csv")
+urls <- str_c(url_in, file_names)
+```
+
+## Read Data
+
+Let's read in the data and see what we have
+
+```{r import_data, meassage = FALSE}
+global_cases <- read_csv(urls[1], show_col_types = FALSE)
+print(global_cases)
+
+```
+
+After looking at the global_cases, I would like to tidy the data set and put each variable (date, cases, deaths) in its column. Also, I don't need Lat and Long for my planning analysis, so I will remove those and rename Region and State to be more R-friendly.
+
+
+```{r tidy_global_data}
+global_cases <- global_cases %>% 
+  pivot_longer(cols = -c(`Province/State`, `Country/Region`, Lat, Long), 
+               names_to = "date", values_to = "cases") %>% 
+               select(-c(Lat, Long))
+
+```
+
+I use the lubridate package to convert the date column into a proper Date object in R.
+
+```{r convert-date-object}
+global_cases <- global_cases %>%
+  mutate(date = mdy(date))
+
+print(head(global_cases))
+
+```
+
+## Data Visualization
+### Spatial Map of Global Cases
+
+Lets visualize global cases in each Country/Region.
+
+```{r map-cases}
+
+# Standardize country names if necessary
+global_cases <- global_cases %>%
+  mutate(`Country/Region` = case_when(
+    `Country/Region` == "US" ~ "United States of America",
+    `Country/Region` == "Russian Federation" ~ "Russia",
+    `Country/Region` == "Congo (Brazzaville)" ~ "Congo",
+    `Country/Region` == "Congo (Kinshasa)" ~ "Dem. Rep. Congo",
+    `Country/Region` == "Central African Republic" ~ "Central African Rep.",
+    `Country/Region` == "South Sudan" ~ "S. Sudan",
+    `Country/Region` == "Cote d'Ivoire" ~ "Côte d'Ivoire",
+    `Country/Region` == "Burma" ~ "Myanmar",
+    `Country/Region` == "Korea, South" ~ "South Korea",
+    `Country/Region` == "Korea, North" ~ "North Korea",
+    `Country/Region` == "Taiwan*" ~ "Taiwan",
+    # Add more mappings as needed
+    TRUE ~ `Country/Region`
+  ))
+
+# Find the maximum cases for each country/region
+max_cases_by_country <- global_cases %>%
+  group_by(`Country/Region`) %>%
+  summarize(max_cases = max(cases, na.rm = TRUE))
+
+# Load world map data
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Join the summarized case data with the world map data
+map_data <- world %>%
+  left_join(max_cases_by_country, by = c("name" = "Country/Region"))
+
+# Plot the map with shading based on the maximum cases in each country
+ggplot(map_data) +
+  geom_sf(aes(fill = max_cases)) +
+  scale_fill_viridis_c(
+    option = "plasma",
+    na.value = "grey90",
+    name = "Max Cases",
+    labels = label_number(scale = 1e-6, suffix = "M") # Convert to millions with "M" suffix
+  ) +
+  labs(
+    title = "Maximum COVID-19 Cases by Country/Region",
+    subtitle = "Shading represents the maximum recorded cases per country",
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(hjust = 0.5, size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12)
+  )
+
+```
+
+The United States, France, Germany, Brazil, and India are highlighted in bright yellow or near-yellow, indicating that these countries have recorded the highest COVID-19 cases globally. The data suggests that United States of America, Brazil, France, Germany, and India have been significantly impacted by COVID-19. Countries like Russia and several in South America and Europe are shaded in lighter colors (pink or light purple), showing moderate to high cases. Greenland is shaded in grey, suggesting that either data is unavailable or the number of cases is very low.
+
+### Bar Chart of Global Cases
+
+```{r bar-chart-global}
+
+# Aggregate cases by Country/Region and select the top 50
+top_20_countries <- global_cases %>%
+  group_by(`Country/Region`) %>%
+  summarize(max_cases = max(cases, na.rm = TRUE)) %>%
+  arrange(desc(max_cases)) %>%
+  slice_head(n = 20) # Select the top 20 countries
+
+# Plot the bar chart with y-axis in billions and value labels on top of bars
+ggplot(top_20_countries, aes(x = reorder(`Country/Region`, -max_cases), y = max_cases)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_text(
+    aes(label = sprintf("%.1f", max_cases / 1e6)), # Format labels in millions with one decimal place
+    vjust = -0.5, # Position above the bars
+    size = 3
+  ) +
+  labs(
+    title = "Top 20 Countries by Total COVID-19 Cases",
+    x = "Country/Region",
+    y = "Total Cases (in Millions)"
+  ) +
+  scale_y_continuous(
+    labels = function(x) sprintf("%.1f", x / 1e6) # Format y-axis labels as millions without commas
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1) # Rotate x-axis labels
+  )
+
+```
+
+The top five countries in terms of total cases are the United States, India, France, Germany, and Brazil. These countries each report at least 37 million cases, highlighting heavily affected regions. The United States of America has the highest number of COVID-19 cases, totaling approximately 103.8 million. This is more than twice the cases reported by the second-highest country, India, which has 44.7 million cases. This gap suggests the US experienced a significantly higher impact in terms of reported COVID-19 cases. 
+
+### Line Plot of USA Total Cases per Month
+
+Show the number of cases per year for the United States of America, we need to filter the data set for the "United States of America," aggregate cases by year, and then visualize the data as a line chart
+
+Lets show the COVID-19 cases per month for the United States of America, we can group the data by month and year. 
+
+```{r show-line-chart-month}
+
+# Filter data for the United States of America and aggregate by month
+usa_monthly_cases <- global_cases %>%
+  filter(`Country/Region` == "United States of America") %>%
+  mutate(year_month = floor_date(date, unit = "month")) %>% # Extract year and month
+  group_by(year_month) %>%
+  summarize(total_cases = max(cases, na.rm = TRUE)) %>% # Aggregate cases by month
+  arrange(year_month)
+
+# Create a line chart for monthly cases
+ggplot(usa_monthly_cases, aes(x = year_month, y = total_cases)) +
+  geom_line(color = "steelblue", size = 1) + # Line for monthly cases
+  geom_point(color = "red", size = 2) + # Add points for emphasis
+  labs(
+    title = "Total COVID-19 Cases in the United States of America",
+    x = "Month",
+    y = "Total Cases"
+  ) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "2 months") + # Format x-axis for months
+  scale_y_continuous(labels = scales::comma) + # Format y-axis with commas
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), # Tilt x-axis labels
+    plot.title = element_text(hjust = 0.5, size = 16), # Centered and styled title
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+```
+
+There was a steep increase in COVID-19 cases from March 2020 to early 2021. This period reflects the early and rapid spread of the virus before vaccines became widely available. From early 2021 to mid-2021, the growth in total cases slows down slightly. This may coincide with the start of mass vaccination campaigns and improved pandemic control measures in the United States. However, cases continued to rise, albeit at a slower rate compared to earlier. A pronounced jump in cases is visible around late 2021 and early 2022, likely corresponding to the emergence of the Omicron variant. From mid-2022 onward, the increase in total cases flattens, suggesting a stabilization. This could be attributed to widespread vaccination, natural immunity, and reduced reporting of minor cases as the pandemic waned. 
+
+## Model
+
+A  regression model will be created to help predict the number of cases in 2023.
+
+```{r regression-model}
+
+# Fit Polynomial Models
+polynomial_model_degree2 <- lm(total_cases ~ poly(as.numeric(year_month), 2), data = usa_monthly_cases)
+polynomial_model_degree3 <- lm(total_cases ~ poly(as.numeric(year_month), 3), data = usa_monthly_cases)
+
+# Plot Observed Data and Polynomial Models
+ggplot(usa_monthly_cases, aes(x = year_month, y = total_cases)) +
+  # Observed Data
+  geom_point(color = "red", size = 2) + # Data points
+  geom_line(color = "steelblue", size = 1) + # Observed line
+  
+  # Degree 2 Polynomial Model
+  geom_smooth(
+    method = "lm",
+    formula = y ~ poly(x, 2),
+    se = FALSE, # Turn off confidence intervals for clarity
+    color = "yellow",
+    size = 1.5 # Slightly thicker for visibility
+  ) +
+  
+  # Degree 3 Polynomial Model
+  geom_smooth(
+    method = "lm",
+    formula = y ~ poly(x, 3),
+    se = FALSE, # Turn off confidence intervals for clarity
+    color = "pink",
+    size = 1.5 # Slightly thicker for visibility
+  ) +
+  
+  
+  # Labels and Axis Formatting
+  labs(
+    title = "Total COVID-19 Cases in the United States with Models",
+    x = "Month",
+    y = "Total Cases"
+  ) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "2 months") + # Format x-axis for months
+  scale_y_continuous(labels = scales::comma) + # Format y-axis with commas
+  
+  # Themes
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), # Tilt x-axis labels
+    plot.title = element_text(hjust = 0.5, size = 16),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+```
+
+### Summary of Model
+
+```{r summary-model}
+
+summary(polynomial_model_degree2)
+summary(polynomial_model_degree3)
+
+```
+
